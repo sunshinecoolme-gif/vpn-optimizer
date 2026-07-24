@@ -9,7 +9,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-if [[ ! -d /etc/os-release ]]; then
+if [[ ! -f /etc/os-release ]]; then
     echo "无法识别系统"
     exit 1
 fi
