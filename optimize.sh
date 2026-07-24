@@ -89,7 +89,7 @@ esac
 
 if [[ -z $HY2_PORT ]]; then HY2_PORT=443; fi
 valid_port "$HY2_PORT" || die 'invalid --port'
-if [[ -z $HY2_PASSWORD ]]; then HY2_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24); fi
+if [[ -z $HY2_PASSWORD ]]; then HY2_PASSWORD=$(openssl rand -hex 16); fi
 [[ $HY2_PASSWORD != *$'\n'* && -n $HY2_PASSWORD ]] || die 'invalid password'
 
 if (( ! NO_OUTBOUND )) && [[ -z $OUTBOUND_TYPE && -t 0 ]]; then
