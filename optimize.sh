@@ -224,3 +224,15 @@ else
 fi
 if systemctl is-active --quiet hysteria-server.service; then ok 'Hysteria2 service is active'; else warn 'service is not active; inspect journalctl -u hysteria-server'; fi
 ok "configuration installed with mode 600: $CONFIG"
+
+SERVER_IP=$(curl -4fsSL --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)
+if [[ -z $SERVER_IP ]]; then
+    SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+fi
+if [[ -n $SERVER_IP ]]; then
+    HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?sni=www.bing.com&insecure=1#Hysteria2"
+    printf '\nHysteria2 连接链接（请勿公开分享）：\n%s\n\n' "$HY2_LINK"
+else
+    warn 'unable to detect public IP; retrieve it with: curl -4s https://api.ipify.org'
+    printf '\nHysteria2 连接链接格式：\nhysteria2://%s@你的VPS公网IP:%s?sni=www.bing.com&insecure=1#Hysteria2\n\n' "$HY2_PASSWORD" "$HY2_PORT"
+fi
