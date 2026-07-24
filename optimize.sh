@@ -140,25 +140,23 @@ if ! command -v hysteria >/dev/null 2>&1; then
     command -v sha256sum >/dev/null 2>&1 || die 'sha256sum is required for verified Hysteria2 installation'
     arch=$(uname -m)
     case $arch in x86_64) hy_arch=amd64;; aarch64) hy_arch=arm64;; armv7l) hy_arch=armv7;; *) die "unsupported architecture: $arch";; esac
-    api=$(mktemp); tarball=$(mktemp); checksums=$(mktemp)
-    trap 'rm -f "$TMP" "$api" "$tarball" "$checksums"' EXIT
+    api=$(mktemp); binary=$(mktemp); hashes=$(mktemp)
+    trap 'rm -f "${TMP:-}" "${api:-}" "${binary:-}" "${hashes:-}"' EXIT
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         https://api.github.com/repos/apernet/hysteria/releases/latest -o "$api"
     version=$(sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' "$api" | head -1)
-    [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'could not validate latest Hysteria2 version'
-    asset="hysteria-linux-${hy_arch}.tar.gz"
-    base="https://github.com/apernet/hysteria/releases/download/${version}"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$tarball"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/checksums.txt" -o "$checksums"
-    expected=$(awk -v name="$asset" '$0 ~ name {print $1; exit}' "$checksums")
+    [[ $version =~ ^(app/)?v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'could not validate latest Hysteria2 version'
+    VERSION_URL=${version//\//%2F}
+    asset="hysteria-linux-${hy_arch}"
+    base="https://github.com/apernet/hysteria/releases/download/${VERSION_URL}"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$binary"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/hashes.txt" -o "$hashes"
+    expected=$(awk -v name="$asset" '$0 ~ name {print $1; exit}' "$hashes")
     [[ $expected =~ ^[A-Fa-f0-9]{64}$ ]] || die 'release checksum was not found'
-    actual=$(sha256sum "$tarball" | awk '{print $1}')
+    actual=$(sha256sum "$binary" | awk '{print $1}')
     [[ $actual == "$expected" ]] || die 'Hysteria2 checksum verification failed'
-    extract=$(mktemp -d)
-    tar -xzf "$tarball" -C "$extract"
-    [[ -x $extract/hysteria ]] || die 'verified archive did not contain hysteria binary'
-    install -m 755 "$extract/hysteria" /usr/local/bin/hysteria
-    rm -rf "$extract" "$api" "$tarball" "$checksums"
+    install -m 755 "$binary" /usr/local/bin/hysteria
+    rm -f "$api" "$binary" "$hashes"
     ok "verified Hysteria2 release installed: $version"
 fi
 
@@ -194,7 +192,6 @@ if (( ! NO_OUTBOUND )); then
         fi
     } >> "$TMP"
 fi
-command -v hysteria >/dev/null 2>&1 && hysteria check -c "$TMP" >/dev/null 2>&1 || die 'Hysteria2 rejected the generated configuration'
 backup_file "$CONFIG"
 chmod 600 "$TMP"
 mv -f "$TMP" "$CONFIG"

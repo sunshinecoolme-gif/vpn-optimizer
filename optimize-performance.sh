@@ -30,7 +30,7 @@ if (( ROLLBACK )); then
     run install -m 644 "$backup" "$SYSCTL_FILE"; ok "restored $backup"; exit 0
 fi
 
-if command -v hysteria >/dev/null 2>&1; then hysteria check -c "$CONFIG" >/dev/null 2>&1 || die 'current Hysteria2 configuration is invalid'; else warn 'hysteria binary not found; skipped config check'; fi
+[[ -s $CONFIG ]] || die "empty config: $CONFIG"
 grep -Eq '^listen:' "$CONFIG" || die 'config has no listen directive'
 if (( ! DRY_RUN )); then
     mkdir -p "$BACKUP_DIR"

@@ -31,10 +31,14 @@ assert_contains "$ROOT/optimize.sh" '--dry-run'
 assert_contains "$ROOT/optimize.sh" '--rollback'
 assert_contains "$ROOT/optimize.sh" 'LimitNOFILE=65535'
 assert_contains "$ROOT/optimize.sh" 'install -m 600'
+assert_contains "$ROOT/optimize.sh" 'hashes.txt'
+assert_contains "$ROOT/optimize.sh" 'VERSION_URL'
 assert_contains "$ROOT/optimize-performance.sh" '--diagnose'
 assert_contains "$ROOT/optimize-performance.sh" '99-hy2.conf'
 assert_not_contains "$ROOT/optimize.sh" 'curl -fsSL https://get.hy2.sh/ | bash'
 assert_not_contains "$ROOT/optimize-performance.sh" 'bash "$DEPLOY_SCRIPT"'
+assert_not_contains "$ROOT/optimize.sh" 'hysteria check'
+assert_not_contains "$ROOT/optimize-performance.sh" 'hysteria check'
 
 if (( failures > 0 )); then
     printf '%d test(s) failed\n' "$failures" >&2
