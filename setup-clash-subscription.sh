@@ -175,12 +175,12 @@ if [[ $(basename "$pref_path") == pref.ini ]]; then pref_mount_path=/$pref_path;
 docker rm "$temp_container" >/dev/null
 trap - EXIT
 sed -i \
-    -e 's|^default_url=.*|default_url=local-sub.txt|' \
+    -e 's|^default_url=.*|default_url=base/local-sub.txt|' \
     -e 's|^serve_file_root=.*|serve_file_root=|' \
     -e 's|^api_access_token=.*|api_access_token=disabled|' \
     -e 's|^proxy_subscription=.*|proxy_subscription=NONE|' \
     "$STATE_DIR/pref.ini"
-grep -q '^default_url=local-sub.txt$' "$STATE_DIR/pref.ini" || die 'failed to configure subconverter default source'
+grep -q '^default_url=base/local-sub.txt$' "$STATE_DIR/pref.ini" || die 'failed to configure subconverter default source'
 chmod 600 "$STATE_DIR/pref.ini"
 
 cat > "$STATE_DIR/Caddyfile" <<EOF
@@ -205,7 +205,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./pref.ini:$pref_mount_path:ro
-      - ./source.txt:$image_workdir/local-sub.txt:ro
+      - ./source.txt:$image_workdir/base/local-sub.txt:ro
     networks: [subscription]
     security_opt: [no-new-privileges:true]
   caddy:
