@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 REPO_URL="https://github.com/sunshinecoolme-gif/vpn-optimizer.git"
+REPO_BRANCH="master"
 INSTALL_DIR="/opt/vpn-optimizer"
 
 if [[ $EUID -ne 0 ]]; then
@@ -36,10 +37,16 @@ esac
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     echo "更新已有脚本..."
-    git -C "$INSTALL_DIR" pull --ff-only
+    git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+    if git -C "$INSTALL_DIR" show-ref --verify --quiet "refs/heads/$REPO_BRANCH"; then
+        git -C "$INSTALL_DIR" switch "$REPO_BRANCH"
+    else
+        git -C "$INSTALL_DIR" switch --create "$REPO_BRANCH" --track "origin/$REPO_BRANCH"
+    fi
+    git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH"
 else
     echo "下载部署脚本..."
-    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 
 chmod +x "$INSTALL_DIR/optimize.sh"
