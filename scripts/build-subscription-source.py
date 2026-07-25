@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import ipaddress
 import os
 import re
@@ -54,6 +55,10 @@ def build_link(server: str, port: int, password: str, sni: str, insecure: bool, 
     return f"hysteria2://{user}@{host}:{port}?{query}#{fragment}"
 
 
+def build_subscription_content(link: str) -> str:
+    return base64.b64encode((link + "\n").encode("utf-8")).decode("ascii") + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-config", required=True)
@@ -66,14 +71,14 @@ def main() -> int:
     try:
         values = parse_link(args.link) if args.link else parse_config(args.server_config, args.server)
         server, port, password, sni, insecure, link_name = values
-        result = build_link(server, port, password, sni, insecure, link_name or args.name)
+        link = build_link(server, port, password, sni, insecure, link_name or args.name)
         if args.check:
             return 0
         if not args.output:
             raise ValueError("--output is required unless --check is used")
         descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(result + "\n")
+            stream.write(build_subscription_content(link))
     except (OSError, ValueError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1

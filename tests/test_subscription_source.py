@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import base64
 import pathlib
 import tempfile
 import unittest
@@ -30,6 +31,11 @@ class SubscriptionSourceTests(unittest.TestCase):
         result = MODULE.build_link("192.0.2.1", 443, "a@b/c", "www.bing.com", True, "VPS CN")
         self.assertIn("a%40b%2Fc@192.0.2.1:443", result)
         self.assertTrue(result.endswith("#VPS%20CN"))
+
+    def test_subscription_content_is_base64_encoded(self):
+        link = "hysteria2://secret@example.com:443#Test"
+        content = MODULE.build_subscription_content(link)
+        self.assertEqual(base64.b64decode(content).decode("utf-8"), link + "\n")
 
 
 if __name__ == "__main__":
