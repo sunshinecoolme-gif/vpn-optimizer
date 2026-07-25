@@ -37,7 +37,8 @@ esac
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     echo "更新已有脚本..."
-    git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+    git -C "$INSTALL_DIR" fetch --depth 1 origin \
+        "$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH"
     if git -C "$INSTALL_DIR" show-ref --verify --quiet "refs/heads/$REPO_BRANCH"; then
         git -C "$INSTALL_DIR" switch "$REPO_BRANCH"
     else
