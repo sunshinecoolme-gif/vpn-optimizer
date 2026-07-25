@@ -12,7 +12,13 @@
 
 ## 部署
 
-默认读取 `/etc/hysteria/config.yaml`：
+使用一键安装命令时，Hysteria2 安装完成后会询问是否生成 HTTPS 订阅。输入 `y` 或 `yes` 即可继续：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/sunshinecoolme-gif/vpn-optimizer/master/install.sh)
+```
+
+也可以安装完成后单独执行订阅脚本。脚本默认读取 `/etc/hysteria/config.yaml`：
 
 ```bash
 cd /opt/vpn-optimizer

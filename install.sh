@@ -60,4 +60,16 @@ echo "开始运行 Hysteria2 部署脚本..."
 echo
 
 cd "$INSTALL_DIR"
-exec bash ./optimize.sh
+bash ./optimize.sh
+
+echo
+if [[ -t 0 ]]; then
+    read -r -p '是否继续生成 Mihomo/Clash Meta HTTPS 订阅链接？[y/N]: ' answer
+    if [[ ${answer:-} =~ ^([Yy]|[Yy][Ee][Ss])$ ]]; then
+        exec bash ./setup-clash-subscription.sh --yes
+    fi
+    echo "已跳过订阅服务部署。稍后可执行："
+else
+    echo "当前不是交互终端，已跳过订阅服务部署。需要时执行："
+fi
+echo "cd $INSTALL_DIR && sudo bash setup-clash-subscription.sh --yes"

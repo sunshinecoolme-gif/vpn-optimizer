@@ -26,6 +26,7 @@ for script in "$ROOT/optimize.sh" "$ROOT/optimize-performance.sh" "$ROOT/setup-c
     bash -n "$script" || failures=$((failures + 1))
     bash "$script" --help >/dev/null || failures=$((failures + 1))
 done
+bash -n "$ROOT/install.sh" || failures=$((failures + 1))
 
 assert_contains "$ROOT/optimize.sh" '--dry-run'
 assert_contains "$ROOT/optimize.sh" '--rollback'
@@ -39,6 +40,8 @@ assert_contains "$ROOT/optimize-performance.sh" '99-hy2.conf'
 assert_contains "$ROOT/install.sh" 'REPO_BRANCH="master"'
 assert_contains "$ROOT/install.sh" 'git clone --depth 1 --branch "$REPO_BRANCH"'
 assert_contains "$ROOT/install.sh" '$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'
+assert_contains "$ROOT/install.sh" '是否继续生成 Mihomo/Clash Meta HTTPS 订阅链接？'
+assert_contains "$ROOT/install.sh" 'exec bash ./setup-clash-subscription.sh --yes'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'tindy2013/subconverter:latest'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'reverse_proxy subconverter:25500'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'openssl rand -hex 24'
