@@ -52,6 +52,7 @@ fi
 
 chmod +x "$INSTALL_DIR/optimize.sh"
 chmod +x "$INSTALL_DIR/optimize-performance.sh"
+chmod +x "$INSTALL_DIR/setup-clash-subscription.sh"
 
 echo
 echo "脚本已下载到：$INSTALL_DIR"

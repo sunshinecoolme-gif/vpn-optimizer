@@ -22,7 +22,7 @@ assert_not_contains() {
     fi
 }
 
-for script in "$ROOT/optimize.sh" "$ROOT/optimize-performance.sh"; do
+for script in "$ROOT/optimize.sh" "$ROOT/optimize-performance.sh" "$ROOT/setup-clash-subscription.sh"; do
     bash -n "$script" || failures=$((failures + 1))
     bash "$script" --help >/dev/null || failures=$((failures + 1))
 done
@@ -39,6 +39,10 @@ assert_contains "$ROOT/optimize-performance.sh" '99-hy2.conf'
 assert_contains "$ROOT/install.sh" 'REPO_BRANCH="master"'
 assert_contains "$ROOT/install.sh" 'git clone --depth 1 --branch "$REPO_BRANCH"'
 assert_contains "$ROOT/install.sh" '$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'type: hysteria2'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'clash-subscription.service'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'openssl rand -hex 24'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'WWW_DIR/index.html'
 assert_not_contains "$ROOT/optimize.sh" 'curl -fsSL https://get.hy2.sh/ | bash'
 assert_not_contains "$ROOT/optimize-performance.sh" 'bash "$DEPLOY_SCRIPT"'
 assert_not_contains "$ROOT/optimize.sh" 'hysteria check'
