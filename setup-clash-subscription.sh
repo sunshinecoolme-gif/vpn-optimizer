@@ -58,15 +58,15 @@ install_packages() {
         debian|ubuntu)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y docker.io curl ca-certificates openssl python3 iproute2
+            apt-get install -y docker.io curl ca-certificates openssl python3 iproute2 tar
             apt-get install -y docker-compose-v2 2>/dev/null || apt-get install -y docker-compose
             ;;
         centos|rhel|rocky|almalinux|fedora)
             local pkg
             pkg=$(command -v dnf || command -v yum || true)
             [[ -n $pkg ]] || die 'dnf/yum not found'
-            "$pkg" install -y docker curl ca-certificates openssl python3 iproute docker-compose-plugin 2>/dev/null || \
-                "$pkg" install -y docker curl ca-certificates openssl python3 iproute docker-compose
+            "$pkg" install -y docker curl ca-certificates openssl python3 iproute tar docker-compose-plugin 2>/dev/null || \
+                "$pkg" install -y docker curl ca-certificates openssl python3 iproute tar docker-compose
             ;;
         *) die "unsupported OS: ${ID:-unknown}";;
     esac
@@ -76,7 +76,8 @@ has_compose() {
     docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1
 }
 if (( ! DRY_RUN )) && { ! command -v docker >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || \
-    ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1 || ! has_compose; }; then
+    ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1 || \
+    ! command -v tar >/dev/null 2>&1 || ! has_compose; }; then
     (( YES )) || { [[ -t 0 ]] && read -r -p 'Install Docker, Compose, curl, OpenSSL and Python 3? [y/N]: ' answer; [[ ${answer:-} =~ ^[Yy]$ ]] || die 'required packages are missing'; }
     info 'installing required packages from the operating-system repositories'
     install_packages
@@ -161,7 +162,16 @@ chmod 600 "$STATE_DIR/source.txt"
 temp_container=subconverter-pref-$$
 docker create --name "$temp_container" "$SUB_IMAGE" >/dev/null
 trap 'docker rm -f "$temp_container" >/dev/null 2>&1 || true' EXIT
-docker cp "$temp_container:/base/pref.ini" "$STATE_DIR/pref.ini"
+pref_path=$(docker export "$temp_container" | tar -tf - | awk '
+    /(^|\/)pref\.ini$/ { exact=$0 }
+    /(^|\/)pref\.example\.ini$/ { example=$0 }
+    END { if (exact) print exact; else if (example) print example }
+')
+[[ -n $pref_path ]] || die 'could not locate pref.ini in the subconverter image'
+docker cp "$temp_container:/$pref_path" "$STATE_DIR/pref.ini"
+image_workdir=$(docker image inspect --format '{{.Config.WorkingDir}}' "$SUB_IMAGE")
+[[ $image_workdir == /* ]] || image_workdir=/$(dirname "$pref_path")
+if [[ $(basename "$pref_path") == pref.ini ]]; then pref_mount_path=/$pref_path; else pref_mount_path=$image_workdir/pref.ini; fi
 docker rm "$temp_container" >/dev/null
 trap - EXIT
 sed -i \
@@ -194,8 +204,8 @@ services:
     container_name: subscription-subconverter
     restart: unless-stopped
     volumes:
-      - ./pref.ini:/base/pref.ini:ro
-      - ./source.txt:/base/local-sub.txt:ro
+      - ./pref.ini:$pref_mount_path:ro
+      - ./source.txt:$image_workdir/local-sub.txt:ro
     networks: [subscription]
     security_opt: [no-new-privileges:true]
   caddy:

@@ -46,6 +46,7 @@ assert_contains "$ROOT/setup-clash-subscription.sh" 'docker port subscription-su
 assert_contains "$ROOT/setup-clash-subscription.sh" 'sslip.io'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'docker-compose-v2'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'address.is_global'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'pref\.example\.ini'
 assert_not_contains "$ROOT/setup-clash-subscription.sh" '25500:25500'
 assert_not_contains "$ROOT/optimize.sh" 'curl -fsSL https://get.hy2.sh/ | bash'
 assert_not_contains "$ROOT/optimize-performance.sh" 'bash "$DEPLOY_SCRIPT"'
