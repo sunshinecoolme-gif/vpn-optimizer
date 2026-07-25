@@ -39,10 +39,14 @@ assert_contains "$ROOT/optimize-performance.sh" '99-hy2.conf'
 assert_contains "$ROOT/install.sh" 'REPO_BRANCH="master"'
 assert_contains "$ROOT/install.sh" 'git clone --depth 1 --branch "$REPO_BRANCH"'
 assert_contains "$ROOT/install.sh" '$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'
-assert_contains "$ROOT/setup-clash-subscription.sh" 'type: hysteria2'
-assert_contains "$ROOT/setup-clash-subscription.sh" 'clash-subscription.service'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'tindy2013/subconverter:latest'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'reverse_proxy subconverter:25500'
 assert_contains "$ROOT/setup-clash-subscription.sh" 'openssl rand -hex 24'
-assert_contains "$ROOT/setup-clash-subscription.sh" 'WWW_DIR/index.html'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'docker port subscription-subconverter'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'sslip.io'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'docker-compose-v2'
+assert_contains "$ROOT/setup-clash-subscription.sh" 'address.is_global'
+assert_not_contains "$ROOT/setup-clash-subscription.sh" '25500:25500'
 assert_not_contains "$ROOT/optimize.sh" 'curl -fsSL https://get.hy2.sh/ | bash'
 assert_not_contains "$ROOT/optimize-performance.sh" 'bash "$DEPLOY_SCRIPT"'
 assert_not_contains "$ROOT/optimize.sh" 'hysteria check'
@@ -52,4 +56,5 @@ if (( failures > 0 )); then
     printf '%d test(s) failed\n' "$failures" >&2
     exit 1
 fi
+python3 "$ROOT/tests/test_subscription_source.py" || exit 1
 printf 'script regression tests: PASS\n'

@@ -10,27 +10,27 @@ die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 usage() { cat <<'EOF'
 Usage: sudo bash setup-clash-subscription.sh [options]
   --link URI       use an existing hysteria2:// URI instead of server config
-  --listen PORT    HTTP subscription port (default: 18080)
-  --name NAME      node name shown in Clash (default: Hysteria2-VPS)
-  --public-host H  public IP or domain used in the subscription URL
-  --token TOKEN    secret URL path (default: randomly generated)
-  --yes            open the TCP port with ufw/firewalld without prompting
-  --dry-run        print detected values without installing the service
+  --name NAME      node name shown in Mihomo (default: Hysteria2-VPS)
+  --public-host H  HTTPS hostname (default: <public-ip>.sslip.io)
+  --token TOKEN    secret URL path; specifying it rotates the subscription URL
+  --yes            install packages and change the firewall without prompting
+  --dry-run        validate inputs and print the intended public URL only
   --help           show this help
 
-The generated profile requires Mihomo/Clash Meta (Hysteria2 is not supported
-by the discontinued original Clash core).
+The public endpoint is HTTPS-only and produces a Mihomo/Clash Meta profile.
+TCP ports 80 and 443 must be available. Hysteria2 can continue using UDP 443.
 EOF
 }
 
-LINK=''; LISTEN_PORT=18080; NODE_NAME='Hysteria2-VPS'; PUBLIC_HOST=''; TOKEN=''; YES=0; DRY_RUN=0
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SOURCE_HELPER=$SCRIPT_DIR/scripts/build-subscription-source.py
+LINK=''; NODE_NAME='Hysteria2-VPS'; PUBLIC_HOST=''; TOKEN=''; TOKEN_GIVEN=0; YES=0; DRY_RUN=0
 while (($#)); do
     case $1 in
         --link) LINK=${2:?missing value}; shift 2;;
-        --listen) LISTEN_PORT=${2:?missing value}; shift 2;;
         --name) NODE_NAME=${2:?missing value}; shift 2;;
         --public-host) PUBLIC_HOST=${2:?missing value}; shift 2;;
-        --token) TOKEN=${2:?missing value}; shift 2;;
+        --token) TOKEN=${2:?missing value}; TOKEN_GIVEN=1; shift 2;;
         --yes) YES=1; shift;;
         --dry-run) DRY_RUN=1; shift;;
         --help|-h) usage; exit 0;;
@@ -38,173 +38,246 @@ while (($#)); do
     esac
 done
 
-[[ $LISTEN_PORT =~ ^[0-9]+$ && $LISTEN_PORT -ge 1 && $LISTEN_PORT -le 65535 ]] || die 'invalid --listen port'
+[[ -f $SOURCE_HELPER ]] || die "missing helper: $SOURCE_HELPER"
 [[ -n $NODE_NAME && $NODE_NAME != *$'\n'* ]] || die 'invalid --name'
-[[ -z $TOKEN || $TOKEN =~ ^[A-Za-z0-9_-]{16,128}$ ]] || die '--token must contain 16-128 letters, digits, _ or -'
+[[ -z $TOKEN || $TOKEN =~ ^[A-Za-z0-9_-]{32,128}$ ]] || die '--token must contain 32-128 letters, digits, _ or -'
+[[ -z $PUBLIC_HOST || $PUBLIC_HOST =~ ^[A-Za-z0-9.-]+$ ]] || die 'invalid --public-host'
 (( EUID == 0 || DRY_RUN )) || die 'run as root (or use --dry-run)'
 
-if [[ -r /etc/os-release ]]; then . /etc/os-release; else die 'cannot detect operating system'; fi
-case ${ID:-} in
-    debian|ubuntu) INSTALL_PYTHON=(apt-get install -y python3);;
-    centos|rhel|rocky|almalinux|fedora)
-        PKG=$(command -v dnf || command -v yum || true)
-        [[ -n $PKG ]] || die 'dnf/yum not found'
-        INSTALL_PYTHON=("$PKG" install -y python3)
-        ;;
-    *) die "unsupported OS: ${ID:-unknown}";;
-esac
-
-if [[ -z $PUBLIC_HOST ]]; then
-    PUBLIC_HOST=$(curl -4fsSL --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)
-    [[ -n $PUBLIC_HOST ]] || PUBLIC_HOST=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+STATE_DIR=/etc/subconverter-stack
+STATE_FILE=$STATE_DIR/install.env
+if [[ -f $STATE_FILE && $TOKEN_GIVEN -eq 0 ]]; then
+    saved_token=$(sed -n 's/^SUBSCRIPTION_TOKEN=//p' "$STATE_FILE" | head -1)
+    [[ $saved_token =~ ^[A-Za-z0-9_-]{32,128}$ ]] && TOKEN=$saved_token
 fi
-[[ -n $PUBLIC_HOST && $PUBLIC_HOST != *$'\n'* && $PUBLIC_HOST != *'/'* ]] || die 'cannot detect public IP; pass --public-host'
+
+[[ -r /etc/os-release ]] || (( DRY_RUN )) || die 'cannot detect operating system'
+if [[ -r /etc/os-release ]]; then . /etc/os-release; fi
+install_packages() {
+    case ${ID:-} in
+        debian|ubuntu)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y docker.io curl ca-certificates openssl python3 iproute2
+            apt-get install -y docker-compose-v2 2>/dev/null || apt-get install -y docker-compose
+            ;;
+        centos|rhel|rocky|almalinux|fedora)
+            local pkg
+            pkg=$(command -v dnf || command -v yum || true)
+            [[ -n $pkg ]] || die 'dnf/yum not found'
+            "$pkg" install -y docker curl ca-certificates openssl python3 iproute docker-compose-plugin 2>/dev/null || \
+                "$pkg" install -y docker curl ca-certificates openssl python3 iproute docker-compose
+            ;;
+        *) die "unsupported OS: ${ID:-unknown}";;
+    esac
+}
+
+has_compose() {
+    docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1
+}
+if (( ! DRY_RUN )) && { ! command -v docker >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || \
+    ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1 || ! has_compose; }; then
+    (( YES )) || { [[ -t 0 ]] && read -r -p 'Install Docker, Compose, curl, OpenSSL and Python 3? [y/N]: ' answer; [[ ${answer:-} =~ ^[Yy]$ ]] || die 'required packages are missing'; }
+    info 'installing required packages from the operating-system repositories'
+    install_packages
+fi
+command -v openssl >/dev/null 2>&1 || die 'openssl is required'
+command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 [[ -n $TOKEN ]] || TOKEN=$(openssl rand -hex 24)
 
+detect_ipv4() {
+    local address=''
+    if command -v curl >/dev/null 2>&1; then
+        address=$(curl -4fsSL --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)
+    fi
+    is_public_ipv4 "$address" || address=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    is_public_ipv4 "$address" || return 1
+    printf '%s' "$address"
+}
+
+is_public_ipv4() {
+    python3 - "$1" <<'PY' >/dev/null 2>&1
+import ipaddress
+import sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if address.version == 4 and address.is_global else 1)
+PY
+}
+
+PUBLIC_IP=$(detect_ipv4) || die 'cannot detect a public IPv4 address'
+if [[ -z $PUBLIC_HOST ]]; then PUBLIC_HOST=${PUBLIC_IP//./-}.sslip.io; fi
+URL="https://${PUBLIC_HOST}/${TOKEN}.yaml"
+
 if (( DRY_RUN )); then
-    info "would publish a Mihomo/Clash Meta profile at http://${PUBLIC_HOST}:${LISTEN_PORT}/${TOKEN}.yaml"
-    if [[ -n $LINK ]]; then info 'source: supplied Hysteria2 URI'; else info 'source: /etc/hysteria/config.yaml'; fi
+    python3 "$SOURCE_HELPER" --server-config /etc/hysteria/config.yaml --link "$LINK" --name "$NODE_NAME" --server "$PUBLIC_IP" --check
+    info "would publish a Mihomo profile at $URL"
+    info 'would expose TCP 80/443; subconverter port 25500 would remain private'
     exit 0
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-    info 'installing Python 3 for the local subscription server'
-    "${INSTALL_PYTHON[@]}"
+systemctl enable --now docker >/dev/null
+
+if docker compose version >/dev/null 2>&1; then COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then COMPOSE=(docker-compose)
+else die 'Docker Compose is not available'; fi
+
+if ! docker ps --format '{{.Names}}' | grep -qx 'subscription-caddy'; then
+    for port in 80 443; do
+        if ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 | grep -q .; then
+            die "TCP $port is already in use; stop the existing web server or use it as the reverse proxy"
+        fi
+    done
 fi
-command -v openssl >/dev/null 2>&1 || die 'openssl is required'
 
-INSTALL_DIR=/etc/clash-subscription
-WWW_DIR=/var/lib/clash-subscription
-ENV_FILE=$INSTALL_DIR/server.env
-PROFILE=$WWW_DIR/$TOKEN.yaml
-SERVICE_FILE=/etc/systemd/system/clash-subscription.service
-install -d -m 700 "$INSTALL_DIR"
-install -d -m 755 "$WWW_DIR"
-printf '%s\n' 'Not Found' > "$WWW_DIR/index.html"
-chmod 644 "$WWW_DIR/index.html"
+SUB_IMAGE_BASE=tindy2013/subconverter:latest
+CADDY_IMAGE_BASE=caddy:2-alpine
+info 'pulling container images'
+docker pull "$SUB_IMAGE_BASE" >/dev/null
+docker pull "$CADDY_IMAGE_BASE" >/dev/null
+resolve_digest() {
+    local image=$1 digest
+    digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
+    [[ $digest == *@sha256:* ]] || die "could not resolve immutable digest for $image"
+    printf '%s' "$digest"
+}
+SUB_IMAGE=$(resolve_digest "$SUB_IMAGE_BASE")
+CADDY_IMAGE=$(resolve_digest "$CADDY_IMAGE_BASE")
 
-export LINK NODE_NAME PUBLIC_HOST PROFILE
-python3 - <<'PY'
-import json, os, re, urllib.parse
+BACKUP_DIR=$STATE_DIR/backups/$(date +%Y%m%d-%H%M%S)
+if [[ -d $STATE_DIR ]]; then
+    install -d -m 700 "$BACKUP_DIR"
+    for file in compose.yaml Caddyfile pref.ini install.env source.txt; do
+        [[ -f $STATE_DIR/$file ]] && cp -p "$STATE_DIR/$file" "$BACKUP_DIR/$file"
+    done
+fi
+install -d -m 700 "$STATE_DIR"
 
-link = os.environ.get("LINK", "")
-name = os.environ["NODE_NAME"]
-server = os.environ["PUBLIC_HOST"]
-port = None
-password = None
-sni = "www.bing.com"
-insecure = True
+python3 "$SOURCE_HELPER" --server-config /etc/hysteria/config.yaml --link "$LINK" --name "$NODE_NAME" --server "$PUBLIC_IP" --output "$STATE_DIR/source.txt"
+chmod 600 "$STATE_DIR/source.txt"
 
-if link:
-    parsed = urllib.parse.urlsplit(link)
-    if parsed.scheme not in ("hysteria2", "hy2"):
-        raise SystemExit("[ERROR] --link must start with hysteria2:// or hy2://")
-    password = urllib.parse.unquote(parsed.username or "")
-    server = parsed.hostname or server
-    port = parsed.port or 443
-    query = urllib.parse.parse_qs(parsed.query)
-    sni = query.get("sni", query.get("peer", [sni]))[0]
-    insecure = query.get("insecure", ["0"])[0].lower() in ("1", "true", "yes")
-    if parsed.fragment:
-        name = urllib.parse.unquote(parsed.fragment)
-else:
-    path = "/etc/hysteria/config.yaml"
-    try:
-        config = open(path, encoding="utf-8").read()
-    except OSError as exc:
-        raise SystemExit(f"[ERROR] cannot read {path}; pass --link instead: {exc}")
-    listen = re.search(r"(?m)^listen:\s*(?:[^:]*:)?(\d+)\s*$", config)
-    secret = re.search(r"(?m)^\s+password:\s*(.+?)\s*$", config)
-    if not listen or not secret:
-        raise SystemExit("[ERROR] cannot find listen/password in Hysteria2 config; pass --link")
-    port = int(listen.group(1))
-    raw = secret.group(1)
-    password = raw[1:-1].replace("''", "'") if len(raw) >= 2 and raw[0] == raw[-1] == "'" else raw.strip('"')
+temp_container=subconverter-pref-$$
+docker create --name "$temp_container" "$SUB_IMAGE" >/dev/null
+trap 'docker rm -f "$temp_container" >/dev/null 2>&1 || true' EXIT
+docker cp "$temp_container:/base/pref.ini" "$STATE_DIR/pref.ini"
+docker rm "$temp_container" >/dev/null
+trap - EXIT
+sed -i \
+    -e 's|^default_url=.*|default_url=local-sub.txt|' \
+    -e 's|^serve_file_root=.*|serve_file_root=|' \
+    -e 's|^api_access_token=.*|api_access_token=disabled|' \
+    -e 's|^proxy_subscription=.*|proxy_subscription=NONE|' \
+    "$STATE_DIR/pref.ini"
+grep -q '^default_url=local-sub.txt$' "$STATE_DIR/pref.ini" || die 'failed to configure subconverter default source'
+chmod 600 "$STATE_DIR/pref.ini"
 
-if not password:
-    raise SystemExit("[ERROR] empty Hysteria2 password")
-
-q = lambda value: json.dumps(value, ensure_ascii=False)
-profile = f'''mixed-port: 7890
-allow-lan: false
-mode: rule
-log-level: info
-ipv6: true
-
-proxies:
-  - name: {q(name)}
-    type: hysteria2
-    server: {q(server)}
-    port: {port}
-    password: {q(password)}
-    sni: {q(sni)}
-    skip-cert-verify: {str(insecure).lower()}
-    udp: true
-
-proxy-groups:
-  - name: PROXY
-    type: select
-    proxies:
-      - {q(name)}
-      - DIRECT
-
-rules:
-  - GEOIP,CN,DIRECT
-  - MATCH,PROXY
-'''
-with open(os.environ["PROFILE"], "w", encoding="utf-8") as output:
-    output.write(profile)
-os.chmod(os.environ["PROFILE"], 0o644)
-PY
-
-cat > "$ENV_FILE" <<EOF
-SUBSCRIPTION_DIRECTORY=$WWW_DIR
-SUBSCRIPTION_PORT=$LISTEN_PORT
+cat > "$STATE_DIR/Caddyfile" <<EOF
+$PUBLIC_HOST {
+    @subscription path /$TOKEN.yaml
+    handle @subscription {
+        rewrite * /sub?target=clash&insert=false&emoji=false&list=false&udp=true&scv=true&sort=false
+        reverse_proxy subconverter:25500
+    }
+    handle {
+        respond "Not Found" 404
+    }
+}
 EOF
-chmod 600 "$ENV_FILE"
-cat > "$SERVICE_FILE" <<'EOF'
-[Unit]
-Description=Clash subscription HTTP server
-After=network-online.target
-Wants=network-online.target
+chmod 600 "$STATE_DIR/Caddyfile"
 
-[Service]
-Type=simple
-EnvironmentFile=/etc/clash-subscription/server.env
-ExecStart=/usr/bin/python3 -m http.server ${SUBSCRIPTION_PORT} --bind 0.0.0.0 --directory ${SUBSCRIPTION_DIRECTORY}
-Restart=on-failure
-RestartSec=3
-DynamicUser=true
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
+cat > "$STATE_DIR/compose.yaml" <<EOF
+services:
+  subconverter:
+    image: $SUB_IMAGE
+    container_name: subscription-subconverter
+    restart: unless-stopped
+    volumes:
+      - ./pref.ini:/base/pref.ini:ro
+      - ./source.txt:/base/local-sub.txt:ro
+    networks: [subscription]
+    security_opt: [no-new-privileges:true]
+  caddy:
+    image: $CADDY_IMAGE
+    container_name: subscription-caddy
+    restart: unless-stopped
+    depends_on: [subconverter]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [subscription]
+    security_opt: [no-new-privileges:true]
+networks:
+  subscription: {}
+volumes:
+  caddy_data: {}
+  caddy_config: {}
 EOF
-systemctl daemon-reload
-systemctl enable --now clash-subscription.service >/dev/null
+chmod 600 "$STATE_DIR/compose.yaml"
+
+cat > "$STATE_FILE" <<EOF
+SUBSCRIPTION_HOST=$PUBLIC_HOST
+SUBSCRIPTION_TOKEN=$TOKEN
+SUBCONVERTER_IMAGE=$SUB_IMAGE
+CADDY_IMAGE=$CADDY_IMAGE
+EOF
+chmod 600 "$STATE_FILE"
+
+info 'starting subconverter and Caddy'
+"${COMPOSE[@]}" -f "$STATE_DIR/compose.yaml" --project-directory "$STATE_DIR" up -d
 
 open_firewall() {
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then ufw allow "$LISTEN_PORT/tcp"
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+        ufw allow 80/tcp
+        ufw allow 443/tcp
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="$LISTEN_PORT/tcp"
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
         firewall-cmd --reload
-    else warn "no active ufw/firewalld detected; ensure TCP $LISTEN_PORT is allowed by the VPS firewall/security group"
+    else
+        warn 'no active ufw/firewalld detected; allow TCP 80/443 in the VPS provider security group'
     fi
 }
-if (( YES )); then
-    open_firewall
+if (( YES )); then open_firewall
 elif [[ -t 0 ]]; then
-    read -r -p "Open TCP $LISTEN_PORT in the local firewall? [y/N]: " answer
-    [[ $answer =~ ^[Yy]$ ]] && open_firewall || warn "ensure TCP $LISTEN_PORT is reachable"
-else
-    warn "firewall unchanged; rerun with --yes or allow TCP $LISTEN_PORT manually"
+    read -r -p 'Open TCP 80/443 in the local firewall? [y/N]: ' answer
+    [[ $answer =~ ^[Yy]$ ]] && open_firewall || warn 'ensure TCP 80/443 is reachable'
+else warn 'firewall unchanged; rerun with --yes or allow TCP 80/443 manually'
 fi
 
-systemctl is-active --quiet clash-subscription.service || die 'subscription service failed to start; inspect journalctl -u clash-subscription'
-URL="http://${PUBLIC_HOST}:${LISTEN_PORT}/${TOKEN}.yaml"
-ok "Clash profile installed: $PROFILE"
-printf '\nMihomo/Clash Meta 订阅链接（请勿公开分享）：\n%s\n\n' "$URL"
-warn 'This URL uses plain HTTP. For long-term use, put it behind an HTTPS domain/reverse proxy.'
+info 'waiting for the HTTPS certificate and converted profile'
+verified=0
+for _ in $(seq 1 30); do
+    response=$(curl -fsS --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null || true)
+    if grep -q 'type: hysteria2' <<<"$response"; then verified=1; break; fi
+    sleep 2
+done
+if (( ! verified )); then
+    warn 'HTTPS validation failed; the old subscription service was left unchanged'
+    "${COMPOSE[@]}" -f "$STATE_DIR/compose.yaml" --project-directory "$STATE_DIR" logs --tail=50 >&2 || true
+    die 'check DNS resolution, provider firewall/security group, and TCP 80/443'
+fi
+[[ $(curl -sS -o /dev/null -w '%{http_code}' "https://$PUBLIC_HOST/" 2>/dev/null || true) == 404 ]] || die 'root path is unexpectedly accessible'
+[[ $(curl -sS -o /dev/null -w '%{http_code}' "https://$PUBLIC_HOST/sub" 2>/dev/null || true) == 404 ]] || die 'public converter API is unexpectedly accessible'
+docker port subscription-subconverter 2>/dev/null | grep -q . && die 'subconverter unexpectedly publishes a host port'
+
+if systemctl list-unit-files clash-subscription.service >/dev/null 2>&1; then
+    systemctl disable --now clash-subscription.service >/dev/null 2>&1 || true
+    warn 'disabled the previous Python subscription service; its files were retained'
+fi
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then ufw delete allow 18080/tcp >/dev/null 2>&1 || true; fi
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --remove-port=18080/tcp >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+
+ok 'HTTPS subscription is ready for Mihomo/Clash Meta'
+printf '\n订阅链接（请勿公开分享）：\n%s\n\n' "$URL"
+printf '状态：cd %q && %s ps\n' "$STATE_DIR" "${COMPOSE[*]}"
+printf '日志：cd %q && %s logs --tail=100\n' "$STATE_DIR" "${COMPOSE[*]}"
+warn 'The random HTTPS URL is the access credential. Rotate it with --token if it leaks.'
