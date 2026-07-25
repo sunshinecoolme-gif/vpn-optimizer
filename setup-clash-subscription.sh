@@ -175,12 +175,12 @@ if [[ $(basename "$pref_path") == pref.ini ]]; then pref_mount_path=/$pref_path;
 docker rm "$temp_container" >/dev/null
 trap - EXIT
 sed -i \
-    -e 's|^default_url=.*|default_url=base/local-sub.txt|' \
+    -e 's|^default_url=.*|default_url=http://caddy:8080/source.txt|' \
     -e 's|^serve_file_root=.*|serve_file_root=|' \
     -e 's|^api_access_token=.*|api_access_token=disabled|' \
     -e 's|^proxy_subscription=.*|proxy_subscription=NONE|' \
     "$STATE_DIR/pref.ini"
-grep -q '^default_url=base/local-sub.txt$' "$STATE_DIR/pref.ini" || die 'failed to configure subconverter default source'
+grep -q '^default_url=http://caddy:8080/source.txt$' "$STATE_DIR/pref.ini" || die 'failed to configure subconverter default source'
 chmod 600 "$STATE_DIR/pref.ini"
 
 cat > "$STATE_DIR/Caddyfile" <<EOF
@@ -194,6 +194,11 @@ $PUBLIC_HOST {
         respond "Not Found" 404
     }
 }
+
+:8080 {
+    root * /srv/subscription-source
+    file_server
+}
 EOF
 chmod 600 "$STATE_DIR/Caddyfile"
 
@@ -205,7 +210,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./pref.ini:$pref_mount_path:ro
-      - ./source.txt:$image_workdir/base/local-sub.txt:ro
     networks: [subscription]
     security_opt: [no-new-privileges:true]
   caddy:
@@ -218,6 +222,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./source.txt:/srv/subscription-source/source.txt:ro
       - caddy_data:/data
       - caddy_config:/config
     networks: [subscription]
@@ -269,12 +274,14 @@ for _ in $(seq 1 30); do
 done
 if (( ! verified )); then
     warn 'HTTPS validation failed; the old subscription service was left unchanged'
+    [[ -n $response ]] && warn "conversion response: $response"
     "${COMPOSE[@]}" -f "$STATE_DIR/compose.yaml" --project-directory "$STATE_DIR" logs --tail=50 >&2 || true
     die 'check DNS resolution, provider firewall/security group, and TCP 80/443'
 fi
 [[ $(curl -sS -o /dev/null -w '%{http_code}' "https://$PUBLIC_HOST/" 2>/dev/null || true) == 404 ]] || die 'root path is unexpectedly accessible'
 [[ $(curl -sS -o /dev/null -w '%{http_code}' "https://$PUBLIC_HOST/sub" 2>/dev/null || true) == 404 ]] || die 'public converter API is unexpectedly accessible'
 docker port subscription-subconverter 2>/dev/null | grep -q . && die 'subconverter unexpectedly publishes a host port'
+docker port subscription-caddy 8080/tcp 2>/dev/null | grep -q . && die 'internal source endpoint unexpectedly publishes a host port'
 
 if systemctl list-unit-files clash-subscription.service >/dev/null 2>&1; then
     systemctl disable --now clash-subscription.service >/dev/null 2>&1 || true
